@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/mqtt/4.2.8/mqtt.min.js"></script>
+    <link rel="stylesheet" href="fontawesome-free-6.7.0-web/css/all.min.css"> 
+    <link rel="stylesheet" href="kvv.css">
+</head>
+<body>
+    <div class="box temperature">
+        <div class="title">Nhiệt độ</div>
+        <i class="fas fa-thermometer-half icon"></i>
+        <div class="value"><span id="temp-value"></span> °C</div>
+    </div>
+    <div class="box humidity">
+        <div class="title">Độ ẩm</div>
+        <i class="fas fa-tint icon"></i>
+        <div class="value"><span id="humidity-value"></span> %</div>
+    </div>
+    <div class="box light">
+        <div class="title">Ánh sáng</div>
+        <i class="fas fa-sun icon"></i>
+        <div class="value"><span id="light-value"></span> lx</div>
+    </div>
+    <div class="box chart"><canvas id="chart"></canvas></div>
+    <div class="column-3">
+        <div class="box led-control">
+            <div class="title">Bật/tắt LED</div>
+            <i class="fas fa-lightbulb icon"></i>
+            <label class="switch">
+                <input type="checkbox" id="ledSwitch">
+                <span class="slider"></span>
+            </label>
+        </div>
+        <div class="box fan-control">
+            <div class="title">Bật/tắt Quạt</div>
+            <i class="fas fa-fan icon"></i>
+            <label class="switch">
+                <input type="checkbox" id="fanSwitch">
+                <span class="slider"></span>
+            </label>
+        </div>
+    </div>
+    <script src="kvv.js"></script>
+</body>
+</html>
