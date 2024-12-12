@@ -1,0 +1,245 @@
+#include <Wire.h>
+#include <Adafruit_Sensor.h>
+#include <DHT.h>
+#include <BH1750.h>
+#include <ESP8266WiFi.h>
+#include <WebSocketsClient.h>
+#include <PubSubClient.h>
+
+// Cấu hình kết nối WiFi
+const char* ssid = "Kvv";
+const char* password = "66668888";
+
+// Cấu hình kết nối MQTT và WebSocket
+const char* mqtt_server = "172.20.10.5";
+const int mqtt_port = 1888;   // Cổng MQTT thông thường
+const int ws_port = 9001;     // Cổng WebSocket
+
+// Chân điều khiển
+#define DHTPIN D4
+#define DHTTYPE DHT11
+#define LED_PIN D5
+#define FAN_PIN D6
+#define LED_NEW_PIN D7 // Đèn LED mới
+
+// MQTT topic
+const char* temp_topic = "home/temperature";
+const char* humidity_topic = "home/humidity";
+const char* light_topic = "home/light";
+const char* led_topic = "home/led";
+const char* fan_topic = "home/fan";
+const char* control_topic = "home/all";
+const char* wind_speed_topic = "home/wind-speed"; // Chủ đề tốc độ gió
+const char* led_new_topic = "home/led-new"; // Chủ đề đèn LED mới
+
+// Khởi tạo DHT và BH1750
+DHT dht(DHTPIN, DHTTYPE);
+BH1750 lightMeter;
+
+WiFiClient espClient;
+WebSocketsClient webSocketClient;
+PubSubClient client(espClient);
+
+// Hàm kết nối WiFi liên tục
+void connectWiFi() {
+  Serial.print("Connecting to WiFi ");
+  Serial.println(ssid);
+  
+  WiFi.begin(ssid, password);
+
+  // Vòng lặp liên tục cho đến khi kết nối thành công
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+
+  Serial.println();
+  Serial.println("WiFi connected");
+  Serial.print("IP Address: ");
+  Serial.println(WiFi.localIP());
+}
+
+// Hàm callback xử lý khi nhận dữ liệu từ MQTT
+void callback(char* topic, byte* payload, unsigned int length) {
+  String message;
+  for (int i = 0; i < length; i++) {
+    message += (char)payload[i];
+  }
+  Serial.print("Message arrived [");
+  Serial.print(topic);
+  Serial.print("]: ");
+  Serial.println(message);
+
+  // Các điều khiển khác
+  if (String(topic) == led_topic) {
+    if (message == "ON") {
+      digitalWrite(LED_PIN, HIGH);
+      Serial.println("Đèn bật");
+    } else if (message == "OFF") {
+      digitalWrite(LED_PIN, LOW);
+      Serial.println("Đèn tắt");
+    }
+  }
+
+  if (String(topic) == fan_topic) {
+    if (message == "ON") {
+      digitalWrite(FAN_PIN, HIGH);
+      Serial.println("Quạt bật");
+    } else if (message == "OFF") {
+      digitalWrite(FAN_PIN, LOW);
+      Serial.println("Quạt tắt");
+    }
+  }
+
+  // Điều khiển cả đèn và quạt cùng lúc
+  if (String(topic) == control_topic) {
+    if (message == "ON") {
+      digitalWrite(LED_PIN, HIGH);
+      digitalWrite(FAN_PIN, HIGH);
+      Serial.println("Đèn và quạt đều bật");
+    } else if (message == "OFF") {
+      digitalWrite(LED_PIN, LOW);
+      digitalWrite(FAN_PIN, LOW);
+      Serial.println("Đèn và quạt đều tắt");
+    }
+  }
+}
+
+// Hàm kết nối MQTT riêng
+void connectMQTT() {
+  const char* mqtt_user = "kvv"; // Tên người dùng MQTT
+  const char* mqtt_password = "123"; // Mật khẩu MQTT
+
+  while (!client.connected()) {
+    Serial.print("Attempting MQTT connection...");
+    // Thử kết nối với broker
+    if (client.connect("ESP8266Client", mqtt_user, mqtt_password)) {
+      Serial.println("connected");
+      client.subscribe(led_topic);      // Subscribe để điều khiển đèn qua MQTT
+      client.subscribe(fan_topic);      // Subscribe để điều khiển quạt qua MQTT
+      client.subscribe(control_topic);  // Subscribe để điều khiển cả đèn và quạt
+      client.subscribe(wind_speed_topic); // Subscribe tốc độ gió
+    } else {
+      Serial.print("failed, rc=");
+      Serial.print(client.state());
+      Serial.println(" try again in 5 seconds");
+      delay(5000);
+    }
+  }
+}
+
+// Hàm xử lý sự kiện WebSocket
+void webSocketEvent(WStype_t type, uint8_t * payload, size_t length) {
+  switch (type) {
+    case WStype_DISCONNECTED:
+      Serial.println("WebSocket disconnected");
+      break;
+    case WStype_CONNECTED:
+      Serial.println("WebSocket connected");
+      break;
+    case WStype_TEXT:
+      client.loop(); // Xử lý tin nhắn nhận được qua WebSocket
+      break;
+  }
+}
+
+// Hàm khởi tạo
+void setup() {
+  Serial.begin(115200);
+  
+  // Khởi tạo chân đèn và quạt
+  pinMode(LED_PIN, OUTPUT);
+  pinMode(FAN_PIN, OUTPUT);
+  pinMode(LED_NEW_PIN, OUTPUT); // Chân đèn LED mới
+  digitalWrite(LED_PIN, LOW);  // Tắt đèn ban đầu
+  digitalWrite(FAN_PIN, LOW);  // Tắt quạt ban đầu
+  digitalWrite(LED_NEW_PIN, LOW); // Tắt đèn LED mới ban đầu
+
+  // Khởi động cảm biến
+  dht.begin();
+  Wire.begin(D2, D1);  // SDA = D2, SCL = D1
+  if (lightMeter.begin()) {
+    Serial.println("BH1750 khởi động thành công.");
+  } else {
+    Serial.println("BH1750 không khởi động được.");
+  }
+
+  // Kết nối WiFi và MQTT
+  connectWiFi();  // Kết nối WiFi
+  client.setServer(mqtt_server, mqtt_port);  // Cấu hình server MQTT thông thường
+  client.setCallback(callback);  // Thiết lập callback cho MQTT
+  connectMQTT();  // Kết nối MQTT thông thường
+
+  // Cấu hình và kết nối WebSocket
+  webSocketClient.begin(mqtt_server, ws_port, "/mqtt");
+  webSocketClient.onEvent(webSocketEvent);
+  webSocketClient.setReconnectInterval(5000); 
+  webSocketClient.enableHeartbeat(15000, 3000, 2);
+
+  // Khởi tạo ngẫu nhiên
+  randomSeed(analogRead(0));
+}
+
+// Hàm loop để gửi dữ liệu và nhận điều khiển qua MQTT
+// Hàm loop để gửi dữ liệu và nhận điều khiển qua MQTT
+void loop() {
+  client.loop();  // MQTT thông thường
+  webSocketClient.loop();  // WebSocket
+
+  // Đọc nhiệt độ, độ ẩm từ DHT11
+  float h = dht.readHumidity();
+  float t = dht.readTemperature();
+  
+  // Đọc ánh sáng từ BH1750
+  float lux = lightMeter.readLightLevel();
+
+  // Kiểm tra và gửi dữ liệu lên MQTT nếu dữ liệu hợp lệ
+  if (!isnan(h) && !isnan(t)) {
+    // Định dạng dữ liệu thành JSON
+    String tempJson = "{\"temperature\":" + String(t) + "}";
+    String humidityJson = "{\"humidity\":" + String(h) + "}";
+    
+    // Gửi dữ liệu nhiệt độ
+    client.publish(temp_topic, tempJson.c_str());
+    // Gửi dữ liệu độ ẩm
+    client.publish(humidity_topic, humidityJson.c_str());
+
+    Serial.println(tempJson);  // In ra serial monitor để kiểm tra
+    Serial.println(humidityJson);  // In ra serial monitor để kiểm tra
+  } else {
+    Serial.println("Lỗi đọc cảm biến DHT11.");
+  }
+  
+  // Gửi dữ liệu ánh sáng thô nếu hợp lệ
+  if (!isnan(lux)) {
+    String lightJson = "{\"light\":" + String(lux) + "}";
+    client.publish(light_topic, lightJson.c_str());
+    Serial.println(lightJson);  // In ra serial monitor để kiểm tra
+  } else {
+    Serial.println("Lỗi đọc cảm biến BH1750.");
+  }
+
+  // Gửi dữ liệu tốc độ gió ngẫu nhiên
+  float windSpeed = random(0, 1000) / 10.0;
+  String windSpeedJson = "{\"windSpeed\":" + String(windSpeed) + "}";
+  client.publish(wind_speed_topic, windSpeedJson.c_str());
+  Serial.println(windSpeedJson);  // In ra serial monitor để kiểm tra
+
+  // Kiểm tra tốc độ gió và nháy LED nếu vượt quá 50
+  if (windSpeed > 50) {
+    flashLED();
+  }
+
+  // Dừng 5 giây trước khi gửi lại dữ liệu
+  delay(5000);
+}
+
+// Hàm để nháy đèn LED mới
+void flashLED() {
+  for (int i = 0; i < 3; i++) {
+    digitalWrite(LED_NEW_PIN, HIGH);  // Bật đèn LED mới
+    delay(500);  // Dừng 500 mili giây
+    digitalWrite(LED_NEW_PIN, LOW);   // Tắt đèn LED mới
+    delay(500);  // Dừng 500 mili giây
+  }
+}
