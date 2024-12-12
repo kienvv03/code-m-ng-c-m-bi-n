@@ -1,0 +1,180 @@
+const mqtt = require('mqtt');
+const mysql = require('mysql2');
+
+// Kết nối tới MySQL
+const db = mysql.createConnection({
+  host: '127.0.0.1',
+  user: 'kvv',
+  password: '123456',
+  database: 'datasensor'
+});
+
+// Kết nối tới MySQL và tự động thử lại nếu lỗi
+function connectMySQL() {
+  db.connect(err => {
+    if (err) {
+      console.error('Error connecting to MySQL:', err);
+      setTimeout(connectMySQL, 5000);
+    } else {
+      console.log('Connected to MySQL');
+      startMQTT();
+    }
+  });
+}
+
+// Kết nối tới MQTT broker
+const mqttClient = mqtt.connect('mqtt://172.20.10.5', {
+  username: 'kvv',
+  password: '123',
+  port: 1888
+});
+
+// Khởi động kết nối MQTT
+function startMQTT() {
+  mqttClient.on('connect', () => {
+    console.log('Connected to MQTT broker');
+
+    // Đăng ký các topic cảm biến và thiết bị
+    const topics = [
+      'home/temperature', 
+      'home/humidity', 
+      'home/light', 
+      'home/wind-speed', // Thêm topic tốc độ gió
+      'home/led1', 
+      'home/led2', 
+      'home/led', 
+      'home/fan', 
+      'home/all'
+    ];
+    topics.forEach(topic => {
+      mqttClient.subscribe(topic, (err) => {
+        if (err) {
+          console.error(`Failed to subscribe to ${topic}`);
+        } else {
+          console.log(`Subscribed to topic: ${topic}`);
+        }
+      });
+    });
+  });
+
+  // Biến tạm lưu dữ liệu cảm biến
+  let sensorData = {
+    temperature: null,
+    humidity: null,
+    light: null,
+    wind_speed: null // Thêm biến tạm cho tốc độ gió
+  };
+
+  // Lắng nghe dữ liệu MQTT
+  mqttClient.on('message', (topic, message) => {
+    const data = message.toString();
+    console.log(`Received message on topic ${topic}: ${data}`);
+
+    // Xử lý dữ liệu cảm biến
+    if (topic === 'home/temperature') {
+      try {
+        const parsedData = JSON.parse(data);
+        sensorData.temperature = parsedData.temperature;
+        console.log('Temperature:', sensorData.temperature);
+      } catch (err) {
+        console.error('Error parsing temperature data:', err);
+      }
+    }
+
+    if (topic === 'home/humidity') {
+      try {
+        const parsedData = JSON.parse(data);
+        sensorData.humidity = parsedData.humidity;
+        console.log('Humidity:', sensorData.humidity);
+      } catch (err) {
+        console.error('Error parsing humidity data:', err);
+      }
+    }
+
+    if (topic === 'home/light') {
+      try {
+        const parsedData = JSON.parse(data);
+        sensorData.light = parsedData.light;
+        console.log('Light Intensity:', sensorData.light);
+      } catch (err) {
+        console.error('Error parsing light data:', err);
+      }
+    }
+
+    // Xử lý dữ liệu tốc độ gió
+    if (topic === 'home/wind-speed') {
+      try {
+        const parsedData = JSON.parse(data);
+        sensorData.wind_speed = parsedData.windSpeed; // Gán giá trị tốc độ gió
+        console.log('Wind Speed:', sensorData.wind_speed);
+      } catch (err) {
+        console.error('Error parsing wind speed data:', err);
+      }
+    }
+
+    // Gửi dữ liệu cảm biến khi tất cả đã có
+    if (
+      sensorData.temperature !== null &&
+      sensorData.humidity !== null &&
+      sensorData.light !== null &&
+      sensorData.wind_speed !== null // Kiểm tra tốc độ gió
+    ) {
+      const query = `INSERT INTO datasensor (temperature, humidity, light_intensity, wind_speed) VALUES (?, ?, ?, ?)`;
+      db.execute(query, [sensorData.temperature, sensorData.humidity, sensorData.light, sensorData.wind_speed], (err, result) => {
+        if (err) {
+          console.error('Error inserting sensor data into datasensor:', err);
+        } else {
+          console.log('Sensor data inserted into datasensor:', result);
+          // Reset dữ liệu cảm biến sau khi gửi
+          sensorData = {
+            temperature: null,
+            humidity: null,
+            light: null,
+            wind_speed: null // Reset tốc độ gió
+          };
+        }
+      });
+    }
+
+    // Xử lý dữ liệu điều khiển thiết bị
+    let device = null;
+    let action = null;
+
+    if (topic === 'home/led' || topic === 'home/fan' || topic === 'home/led2' || topic === 'home/led3') {
+      device = topic.split('/')[1];  // "led" hoặc "fan"
+      action = data.toUpperCase();   // Chuyển thành in hoa (on/off -> ON/OFF)
+    }
+
+    if (topic === 'home/all') {
+      if (data === 'ON' || data === 'OFF') {
+        insertDeviceData('led', data);
+        insertDeviceData('fan', data);
+      } else {
+        const actions = data.split(',');
+        actions.forEach(actionPair => {
+          const [dev, act] = actionPair.split(': ');
+          insertDeviceData(dev, act.toUpperCase());
+        });
+      }
+    }
+
+    if (device && action) {
+      insertDeviceData(device, action);
+    }
+  });
+}
+
+// Hàm để chèn dữ liệu thiết bị vào bảng 'device'
+function insertDeviceData(device, action) {
+  const query = `INSERT INTO device (device, action) VALUES (?, ?)`;
+  db.execute(query, [device, action], (err, result) => {
+    if (err) {
+      console.error('Error inserting device action into device:', err);
+    } else {
+      console.log('Device action inserted into device:', result);
+    }
+  });
+}
+
+// Khởi động ứng dụng
+connectMySQL();
